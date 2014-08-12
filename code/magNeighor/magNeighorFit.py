@@ -21,13 +21,13 @@ def find_mag_neighor(kic, quarter, num, offset=0, ccd=True):
     - `num` - number of tpfs needed
     - `offset` - number of tpfs that are excluded
     - `ccd` - if the tpfs need to be on the same CCD
-    
+
     ## outputs:
     - `target_tpf` - tpf of the target star
     - `tpfs` - tpfs of stars that are closet to the target star in magnitude
     """
     target_tpf = client.target_pixel_files(ktc_kepler_id=kic, sci_data_quarter=quarter, ktc_target_type="LC")[0]
-    
+
     if ccd:
         stars_over = client.target_pixel_files(ktc_kepler_id="!=%d"%target_tpf.ktc_kepler_id, kic_kepmag=">=%f"%target_tpf.kic_kepmag, sci_data_quarter=target_tpf.sci_data_quarter, sci_channel=target_tpf.sci_channel, sort=("kic_kepmag", 1),ktc_target_type="LC", max_records=num+offset)
         stars_under = client.target_pixel_files(ktc_kepler_id="!=%d"%target_tpf.ktc_kepler_id, kic_kepmag="<=%f"%target_tpf.kic_kepmag, sci_data_quarter=target_tpf.sci_data_quarter, sci_channel=target_tpf.sci_channel, sort=("kic_kepmag", -1),ktc_target_type="LC", max_records=num+offset)
@@ -51,7 +51,7 @@ def find_mag_neighor(kic, quarter, num, offset=0, ccd=True):
     for i in range(offset, offset+num):
         tmp_kic, tmp_bias, tmp_tpf = neighor_list[i]
         tpfs[tmp_kic] = tmp_tpf
-        
+
     return target_tpf, tpfs
 
 #help function to find the pixel mask
@@ -92,7 +92,7 @@ def load_data(tpf):
         interMask = np.isfinite(flux[:,i])
         flux[~interMask,i] = np.interp(time[~interMask], time[interMask], flux[interMask,i])
         flux_err[~interMask,i] = np.inf
-    
+
     return time, flux, pixel_mask, kplr_mask, epoch_mask, flux_err
 
 def get_kfold_train_mask(length, k, rand=False):
@@ -115,7 +115,7 @@ def get_fit_matrix(target_tpf, neighor_tpfs, poly=0, auto=False, offset=0, windo
     - `neighor_tpfs` - neighor tpfs in magnitude
     - `auto` - if autorgression
     - `poly` - number of orders of polynomials of time need to be added
-    
+
     ## outputs:
     - `neighor_flux_matrix` - fitting matrix of neighor flux
     - `target_flux` - target flux
@@ -138,7 +138,7 @@ def get_fit_matrix(target_tpf, neighor_tpfs, poly=0, auto=False, offset=0, windo
         neighor_pixel_maskes.append(tmpResult[2])
         neighor_kplr_maskes.append(tmpResult[3])
         epoch_mask *= tmpResult[4]
-    
+
     #remove bad time point based on simulteanous epoch mask
     time = time[epoch_mask>0]
     target_flux = target_flux[epoch_mask>0]
@@ -192,7 +192,7 @@ def fit_target(target_flux, target_kplr_mask, neighor_flux_matrix, time, epoch_m
     - `target_flux` - target flux
     - `target_kplr_mask` - kepler mask of the target star
     - `neighor_flux_matrix` - fitting matrix of neighor flux
-    - `time` - array of time 
+    - `time` - array of time
     - `epoch_mask` - epoch mask
     - `covar_list` - covariance list
     - `margin` - size of the test region
@@ -200,7 +200,7 @@ def fit_target(target_flux, target_kplr_mask, neighor_flux_matrix, time, epoch_m
     - `l2` - strenght of L2 regularization strength
     - `thread_num` - thread number
     - `prefix` - output file's prefix
-    
+
     ## outputs:
     - .npy file - fitting fluxes of pixels
     """
@@ -217,15 +217,15 @@ def fit_target(target_flux, target_kplr_mask, neighor_flux_matrix, time, epoch_m
     fit_coe = []
     length = target_flux.shape[0]
     total_length = epoch_mask.shape[0]
-    
+
     thread_len = total_length//thread_num
     last_len = total_length - (thread_num-1)*thread_len
-    
+
     filename = "./%s"%prefix
     dir = os.path.dirname(filename)
     if not os.path.exists(dir):
         os.makedirs(dir)
-    
+
     class fit_epoch(threading.Thread):
         def __init__(self, thread_id, initial, len, time_initial, time_len):
             threading.Thread.__init__(self)
@@ -250,11 +250,11 @@ def fit_target(target_flux, target_kplr_mask, neighor_flux_matrix, time, epoch_m
                 else:
                     train_mask[i-margin:i+margin+1] = 0
                 train_mask = train_mask[epoch_mask>0]
-                
+
                 covar_mask = np.ones((length, length))
                 covar_mask[train_mask==0, :] = 0
                 covar_mask[:, train_mask==0] = 0
-                
+
                 tmp_covar = covar[covar_mask>0]
                 train_length = np.sum(train_mask, axis=0)
                 tmp_covar = tmp_covar.reshape(train_length, train_length)
@@ -264,7 +264,7 @@ def fit_target(target_flux, target_kplr_mask, neighor_flux_matrix, time, epoch_m
                 time_stp += 1
                 print('done%d'%i)
             print('Exiting%d'%self.thread_id)
-    
+
     thread_list = []
     time_initial = 0
     for i in range(0, thread_num-1):
@@ -275,21 +275,21 @@ def fit_target(target_flux, target_kplr_mask, neighor_flux_matrix, time, epoch_m
         thread.start()
         thread_list.append(thread)
         time_initial += time_len
-    
+
     initial = (thread_num-1)*thread_len
     thread_epoch = epoch_mask[initial:initial+last_len]
     time_len = np.sum(thread_epoch)
     thread = fit_epoch(thread_num-1, initial, last_len, time_initial, time_len)
     thread.start()
     thread_list.append(thread)
-    
+
     for t in thread_list:
         t.join()
     print 'all done'
-    
+
     offset = 0
     window = 0
-    
+
     for i in range(0, thread_num):
         tmp_fit_flux = np.load('./%stmp%d.npy'%(prefix, i))
         if i==0:
@@ -297,7 +297,7 @@ def fit_target(target_flux, target_kplr_mask, neighor_flux_matrix, time, epoch_m
         else:
             fit_flux = np.concatenate((fit_flux, tmp_fit_flux), axis=0)
     np.save('./%s.npy'%prefix, fit_flux)
-    
+
     for i in range(0, thread_num):
         os.remove('./%stmp%d.npy'%(prefix, i))
 
@@ -307,13 +307,13 @@ def plot_fit(kid, quarter, l2, offset, num, poly, ccd, target_flux, target_kplr_
     target_flux = target_flux[:, target_kplr_mask==3]
 
     target_lightcurve = np.sum(target_flux, axis=1)
-    
+
     fit_pixel = np.load('./%s.npy'%prefix)
     fit_lightcurve = np.sum(fit_pixel, axis=1)
     ratio = np.divide(target_lightcurve, fit_lightcurve)
-    
+
     print ratio
-    
+
     star = client.star(kid)
     lc = star.get_light_curves(short_cadence=False)[quarter]
     data = lc.read()
@@ -323,7 +323,7 @@ def plot_fit(kid, quarter, l2, offset, num, poly, ccd, target_flux, target_kplr_
     pdc_time = data["TIME"][inds]
     pdc_mean = np.mean(flux)
     flux = flux/pdc_mean
-    
+
     mean_list = np.zeros_like(epoch_mask, dtype=float)
     std_list = np.zeros_like(epoch_mask, dtype=float)
     pdc_mean_list = np.zeros_like(epoch_mask, dtype=float)
@@ -347,17 +347,17 @@ def plot_fit(kid, quarter, l2, offset, num, poly, ccd, target_flux, target_kplr_
     std_list = std_list[epoch_mask>0]
     pdc_mean_list = pdc_mean_list[inds]
     pdc_std_list = pdc_std_list[inds]
-    
+
     print mean_list
     print pdc_mean_list
     print std_list
     print pdc_std_list
-    
+
     median_std = np.median(std_list)
     pdc_median_std = np.median(pdc_std_list)
     print median_std
     print pdc_median_std
-    
+
     time_len = time.shape[0]
     transit_list = []
     while transit_time < time[-1]:
@@ -371,7 +371,7 @@ def plot_fit(kid, quarter, l2, offset, num, poly, ccd, target_flux, target_kplr_
     half_len = round(transit_duration/2/0.5)
     measure_half_len = 3*24*2
     print half_len
-    
+
     transit_mask = np.zeros_like(epoch_mask)
     for i in range(0,len(transit_list)):
         loc = (np.abs(whole_time-transit_list[i])).argmin()
@@ -380,7 +380,7 @@ def plot_fit(kid, quarter, l2, offset, num, poly, ccd, target_flux, target_kplr_
         transit_mask[loc] = 3
     pdc_transit_mask = transit_mask[inds]
     transit_mask = transit_mask[epoch_mask>0]
-    
+
     signal = np.mean(ratio[transit_mask==1])-np.mean(ratio[transit_mask>=2])
     pdc_signal = np.mean(flux[pdc_transit_mask==1])-np.mean(flux[pdc_transit_mask>=2])
     depth = np.mean(ratio[transit_mask==1])- np.mean(ratio[transit_mask==3])
@@ -390,9 +390,9 @@ def plot_fit(kid, quarter, l2, offset, num, poly, ccd, target_flux, target_kplr_
 
     sn = signal/median_std
     pdc_sn =pdc_signal/pdc_median_std
-    
+
     transit_period = half_len*2*0.5
-    
+
     f, axes = plt.subplots(4, 1)
     axes[0].plot(time[transit_mask<2], target_lightcurve[transit_mask<2], '.b', markersize=1)
     axes[0].plot(time[transit_mask>=2], target_lightcurve[transit_mask>=2], '.k', markersize=1, label="Transit singal \n within %.1f hrs window"%transit_period)
@@ -401,13 +401,13 @@ def plot_fit(kid, quarter, l2, offset, num, poly, ccd, target_flux, target_kplr_
     axes[0].set_ylabel("Data")
     ylim = axes[0].get_ylim()
     axes[0].legend(loc=1, ncol=3, prop={'size':8})
-    
+
     axes[1].plot(time, fit_lightcurve, '.b', markersize=1)
     plt.setp( axes[1].get_xticklabels(), visible=False)
     plt.setp( axes[1].get_yticklabels(), visible=False)
     axes[1].set_ylabel("Fit")
     axes[1].set_ylim(ylim)
-    
+
     axes[2].plot(time[transit_mask<2], ratio[transit_mask<2], '.b', markersize=2)
     axes[2].plot(time[transit_mask>=2], ratio[transit_mask>=2], '.k', markersize=2, label="Transit singal \n within %.1f hrs window"%transit_period)
     axes[2].plot(time, mean_list, 'r-')
@@ -418,9 +418,9 @@ def plot_fit(kid, quarter, l2, offset, num, poly, ccd, target_flux, target_kplr_
 
     axes[2].text(time[2000], 1.0006, 'S/N = %.3f'%sn)
     axes[2].legend(loc=1, ncol=3, prop={'size':8})
-    
+
     #plot the PDC curve
-    
+
     axes[3].plot(pdc_time[pdc_transit_mask<2], flux[pdc_transit_mask<2], '.b', markersize=2)
     axes[3].plot(pdc_time[pdc_transit_mask>=2], flux[pdc_transit_mask>=2], '.k', markersize=2, label="Transit singal \n within %.1f hrs window"%transit_period)
     axes[3].plot(pdc_time, pdc_mean_list, 'r-')
@@ -454,19 +454,19 @@ if __name__ == "__main__":
         margin = 48
         thread_num = 3
         prefix = 'kic%d/lightcurve_%d_q%d_num%d-%d_reg%.0e_poly%d_auto%r-%d-%d_margin%d'%(kid, kid, quarter, offset+1, num, l2, poly, auto, auto_offset, auto_window, margin)
-        
+
         transit_time = 182.10391
         period = 27.508682
         transit_duration = 6.1
-        
+
         target_tpf, neighor_tpfs = find_mag_neighor(kid, quarter, num, offset=0, ccd=True)
-        
+
         neighor_flux_matrix, target_flux, covar_list, time, neighor_kid, neighor_kplr_maskes, target_kplr_mask, epoch_mask = get_fit_matrix(target_tpf, neighor_tpfs, poly, auto, auto_offset, auto_window)
 
         fit_target(target_flux, target_kplr_mask, neighor_flux_matrix, time, epoch_mask, covar_list, margin, poly, l2, thread_num, prefix)
 
         plot_fit(kid, quarter, l2, offset, num, poly, ccd, target_flux, target_kplr_mask, epoch_mask, time, margin, prefix, transit_time, period, transit_duration)
-        
+
 
 
 

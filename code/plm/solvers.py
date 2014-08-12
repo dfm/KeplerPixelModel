@@ -29,7 +29,10 @@ def linear_least_squares(A, y, yvar=None, l2=None):
     # Incorporate the observational uncertainties.
     if yvar is not None:
         CiA = A / yvar[:, None]
-        Ciy = y / yvar
+        if len(y.shape) > 1:
+            Ciy = y / yvar[:, None]
+        else:
+            Ciy = y / yvar
     else:
         CiA = A
         Ciy = y
