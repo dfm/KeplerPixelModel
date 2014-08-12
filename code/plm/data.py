@@ -5,6 +5,8 @@ from __future__ import division, print_function
 __all__ = ["find_mag_neighbor"]
 
 import kplr
+import logging
+import numpy as np
 
 
 # A connection to the kplr interface.
@@ -58,54 +60,78 @@ def find_mag_neighbor(kic, quarter, num, offset=0, ccd=True):
     # Execute the queries to find the predictor TPFs.
     stars_over = client.target_pixel_files(**over_args)
     stars_under = client.target_pixel_files(**under_args)
+    logging.info("Found {0} brighter / {1} fainter TPFs."
+                 .format(len(stars_under), len(stars_over)))
 
+    # Loop over the predictor stars and compute the magnitude differences.
+    dtype = [('kic', int), ('bias', float), ('tpf', type(target_tpf))]
+    neighor_list = []
+    tpf_list = stars_over+stars_under
+    target_kepmag = target_tpf.kic_kepmag
+    for tpf in tpf_list:
+        neighor_list.append((tpf.ktc_kepler_id,
+                             np.fabs(tpf.kic_kepmag-target_kepmag), tpf))
+
+    # Sort that list and extract only the targets that we want.
+    neighor_list = np.array(neighor_list, dtype=dtype)
+    neighor_list = np.sort(neighor_list, kind='mergesort', order='bias')
     tpfs = {}
-
-    i=0
-    j=0
-    offset_list =[]
-    while len(tpfs) <num+offset:
-        while stars_over[i].ktc_kepler_id in tpfs:
-            i+=1
-        tmp_over = stars_over[i]
-        while stars_under[j].ktc_kepler_id in tpfs:
-            j+=1
-        tmp_under = stars_under[j]
-        if tmp_over.kic_kepmag-target_tpf.kic_kepmag > target_tpf.kic_kepmag-tmp_under.kic_kepmag:
-            tpfs[tmp_under.ktc_kepler_id] = tmp_under
-            j+=1
-            if len(tpfs)>offset:
-                pass
-            else:
-                offset_list.append(tmp_under.ktc_kepler_id)
-        elif tmp_over.kic_kepmag-target_tpf.kic_kepmag < target_tpf.kic_kepmag-tmp_under.kic_kepmag:
-            tpfs[tmp_over.ktc_kepler_id] = tmp_over
-            i+=1
-            if len(tpfs)>offset:
-                pass
-            else:
-                offset_list.append(tmp_over.ktc_kepler_id)
-        elif len(tpfs) < num+offset-1:
-            tpfs[tmp_under.ktc_kepler_id] = tmp_under
-            tpfs[tmp_over.ktc_kepler_id] = tmp_over
-            i+=1
-            j+=1
-            if len(tpfs)>offset+1:
-                pass
-            elif len(tpfs) == offset+1:
-                offset_list.append(tmp_under.ktc_kepler_id)
-            else:
-                offset_list.append(tmp_over.ktc_kepler_id)
-                offset_list.append(tmp_under.ktc_kepler_id)
-        else:
-            tpfs[tmp_over.ktc_kepler_id] = tmp_over
-            i+=1
-            if len(tpfs)>offset:
-                pass
-            else:
-                offset_list.append(tmp_over.ktc_kepler_id)
-
-    for key in offset_list:
-        tpfs.pop(key)
+    for i in range(offset, offset+num):
+        tmp_kic, tmp_bias, tmp_tpf = neighor_list[i]
+        tpfs[tmp_kic] = tmp_tpf
 
     return target_tpf, tpfs
+
+
+def get_pixel_mask(flux, kplr_mask):
+    """
+    Helper function to find the pixel mask
+
+    """
+    pixel_mask = np.zeros(flux.shape)
+    pixel_mask[np.isfinite(flux)] = 1  # okay if finite
+    pixel_mask[:, (kplr_mask < 1)] = 0  # unless masked by kplr
+    return pixel_mask
+
+
+def get_epoch_mask(pixel_mask):
+    """
+    Helper function to find the epoch mask
+
+    """
+    foo = np.sum(np.sum((pixel_mask > 0), axis=2), axis=1)
+    epoch_mask = np.zeros_like(foo)
+    epoch_mask[(foo > 0)] = 1
+    return epoch_mask
+
+
+def load_data(tpf):
+    """
+    Helper function to load data from TPF object.
+
+    TODO: document the outputs.
+
+    """
+    kplr_mask, time, flux, flux_err = [], [], [], []
+    with tpf.open() as file:
+        hdu_data = file[1].data
+        kplr_mask = file[2].data
+        time = hdu_data["time"]
+        flux = hdu_data["flux"]
+        flux_err = hdu_data["flux_err"]
+    pixel_mask = get_pixel_mask(flux, kplr_mask)
+    epoch_mask = get_epoch_mask(pixel_mask)
+    flux = flux[:, kplr_mask > 0]
+    flux_err = flux_err[:, kplr_mask > 0]
+
+    flux = flux.reshape((flux.shape[0], -1))
+    flux_err = flux_err.reshape((flux.shape[0], -1))
+
+    # Interpolate the bad points
+    for i in range(flux.shape[1]):
+        interMask = np.isfinite(flux[:, i])
+        flux[~interMask, i] = np.interp(time[~interMask], time[interMask],
+                                        flux[interMask, i])
+        flux_err[~interMask, i] = np.inf
+
+    return time, flux, pixel_mask, kplr_mask, epoch_mask, flux_err
