@@ -65,19 +65,19 @@ def find_mag_neighbor(kic, quarter, num, offset=0, ccd=True):
 
     # Loop over the predictor stars and compute the magnitude differences.
     dtype = [('kic', int), ('bias', float), ('tpf', type(target_tpf))]
-    neighor_list = []
+    neighbor_list = []
     tpf_list = stars_over+stars_under
     target_kepmag = target_tpf.kic_kepmag
     for tpf in tpf_list:
-        neighor_list.append((tpf.ktc_kepler_id,
+        neighbor_list.append((tpf.ktc_kepler_id,
                              np.fabs(tpf.kic_kepmag-target_kepmag), tpf))
 
     # Sort that list and extract only the targets that we want.
-    neighor_list = np.array(neighor_list, dtype=dtype)
-    neighor_list = np.sort(neighor_list, kind='mergesort', order='bias')
+    neighbor_list = np.array(neighbor_list, dtype=dtype)
+    neighbor_list = np.sort(neighbor_list, kind='mergesort', order='bias')
     tpfs = {}
     for i in range(offset, offset+num):
-        tmp_kic, tmp_bias, tmp_tpf = neighor_list[i]
+        tmp_kic, tmp_bias, tmp_tpf = neighbor_list[i]
         tpfs[tmp_kic] = tmp_tpf
 
     return target_tpf, tpfs

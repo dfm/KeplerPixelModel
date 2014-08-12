@@ -2,9 +2,8 @@
 
 from __future__ import division, print_function
 
-__all__ = ["get_kfold_train_mask"]
+__all__ = ["fit_target"]
 
-import os
 import logging
 import numpy as np
 from multiprocessing import Pool
@@ -123,6 +122,7 @@ def get_fit_matrix(target_tpf, neighbor_tpfs, poly=0, auto=False, offset=0,
     time_std = np.std(time)
     nor_time = (time-time_mean)/time_std
     p = np.vander(nor_time, poly + 1)
+    print(p.shape)
     neighbor_flux_matrix = np.concatenate((neighbor_flux_matrix, p), axis=1)
 
     logging.info("The final predictor flux matrix has the shape: {0}"
@@ -133,7 +133,8 @@ def get_fit_matrix(target_tpf, neighbor_tpfs, poly=0, auto=False, offset=0,
 
 
 def fit_epoch(args):
-    target_flux, target_flux_var, neighbor_flux_matrix, l2 = args
+    ind, target_flux, target_flux_var, neighbor_flux_matrix, l2 = args
+    print(ind)
     w = np.empty((target_flux.shape[1], neighbor_flux_matrix.shape[1]))
     for i in range(target_flux.shape[1]):
         w[i, :] = linear_least_squares(neighbor_flux_matrix, target_flux[:, i],
@@ -141,9 +142,8 @@ def fit_epoch(args):
     return w
 
 
-def fit_target(target_flux, target_kplr_mask, neighbor_flux_matrix, time,
-               epoch_mask, target_flux_var, margin, poly, l2, thread_num,
-               prefix):
+def fit_target(target_tpf, neighbor_tpfs, margin, poly, l2, auto=False,
+               offset=0, window=0):
     """
     ## inputs:
     - `target_flux` - target flux
@@ -163,6 +163,11 @@ def fit_target(target_flux, target_kplr_mask, neighbor_flux_matrix, time,
     - .npy file - fitting fluxes of pixels
 
     """
+    (neighbor_flux_matrix, target_flux, target_flux_var, time,
+     neighbor_kid, neighbor_kplr_maskes, target_kplr_mask,
+     epoch_mask) = get_fit_matrix(target_tpf, neighbor_tpfs, poly=poly,
+                                  auto=auto, offset=offset, window=window)
+
     target_kplr_mask = target_kplr_mask.flatten()
     target_kplr_mask = target_kplr_mask[target_kplr_mask > 0]
 
@@ -174,9 +179,9 @@ def fit_target(target_flux, target_kplr_mask, neighbor_flux_matrix, time,
     target_flux_var = target_flux_var[optimal]
 
     # Compute the train-and-test masks.
-    masks = (np.abs(t - time) < margin for t in time)
-    args = ((target_flux[m], target_flux_var[m], neighbor_flux_matrix[m], l2)
-            for m in masks)
+    masks = (np.abs(t - time) > margin for t in time)
+    args = ((i, target_flux[m], target_flux_var[m], neighbor_flux_matrix[m],
+             l2) for i, m in enumerate(masks))
 
     # Pre-compute the L2 regularization vector setting the polynomial
     # regularization to zero.
@@ -191,94 +196,3 @@ def fit_target(target_flux, target_kplr_mask, neighbor_flux_matrix, time,
     print(weights)
     print(len(weights))
     print(weights[0].shape)
-    assert 0
-
-    # Make sure that the basepath for output exists.
-    filename = os.path.join(".", prefix)
-    basedir = os.path.dirname(filename)
-    if not os.path.exists(basedir):
-        os.makedirs(basedir)
-
-    covar = np.mean(covar_list, axis=0)**2
-    fit_flux = []
-    fit_coe = []
-    length = target_flux.shape[0]
-    total_length = epoch_mask.shape[0]
-
-    thread_len = total_length//thread_num
-    last_len = total_length - (thread_num-1)*thread_len
-
-    class fit_epoch(threading.Thread):
-        def __init__(self, thread_id, initial, len, time_initial, time_len):
-            threading.Thread.__init__(self)
-            self.thread_id = thread_id
-            self.initial = initial
-            self.len = len
-            self.time_initial = time_initial
-            self.time_len = time_len
-        def run(self):
-            print('Starting%d'%self.thread_id)
-            print (self.thread_id , self.time_initial, self.time_len)
-            tmp_fit_flux = np.empty((self.time_len, optimal_len))
-            time_stp = 0
-            for i in range(self.initial, self.initial+self.len):
-                if epoch_mask[i] == 0:
-                    continue
-                train_mask = np.ones(total_length)
-                if i<margin:
-                    train_mask[0:i+margin+1] = 0
-                elif i > total_length-margin-1:
-                    train_mask[i-margin:] = 0
-                else:
-                    train_mask[i-margin:i+margin+1] = 0
-                train_mask = train_mask[epoch_mask>0]
-
-                covar_mask = np.ones((length, length))
-                covar_mask[train_mask==0, :] = 0
-                covar_mask[:, train_mask==0] = 0
-
-                tmp_covar = covar[covar_mask>0]
-                train_length = np.sum(train_mask, axis=0)
-                tmp_covar = tmp_covar.reshape(train_length, train_length)
-                result = lss.leastSquareSolve(neighor_flux_matrix[train_mask>0], target_flux[train_mask>0], tmp_covar, l2, False, poly)[0]
-                tmp_fit_flux[time_stp, :] = np.dot(neighor_flux_matrix[time_stp+self.time_initial, :], result)
-                np.save('./%stmp%d.npy'%(prefix, self.thread_id), tmp_fit_flux)
-                time_stp += 1
-                print('done%d'%i)
-            print('Exiting%d'%self.thread_id)
-
-    thread_list = []
-    time_initial = 0
-    for i in range(0, thread_num-1):
-        initial = i*thread_len
-        thread_epoch = epoch_mask[initial:initial+thread_len]
-        time_len = np.sum(thread_epoch)
-        thread = fit_epoch(i, initial, thread_len, time_initial, time_len)
-        thread.start()
-        thread_list.append(thread)
-        time_initial += time_len
-
-    initial = (thread_num-1)*thread_len
-    thread_epoch = epoch_mask[initial:initial+last_len]
-    time_len = np.sum(thread_epoch)
-    thread = fit_epoch(thread_num-1, initial, last_len, time_initial, time_len)
-    thread.start()
-    thread_list.append(thread)
-
-    for t in thread_list:
-        t.join()
-    print('all done')
-
-    offset = 0
-    window = 0
-
-    for i in range(0, thread_num):
-        tmp_fit_flux = np.load('./%stmp%d.npy'%(prefix, i))
-        if i==0:
-            fit_flux = tmp_fit_flux
-        else:
-            fit_flux = np.concatenate((fit_flux, tmp_fit_flux), axis=0)
-    np.save('./%s.npy'%prefix, fit_flux)
-
-    for i in range(0, thread_num):
-        os.remove('./%stmp%d.npy'%(prefix, i))
